@@ -208,6 +208,10 @@ type DevinConfig struct {
 	// 起算、跨重开累计）——本键配得比 180s 大不会突破累计上限。
 	// 全局字段，各 lane 一致。
 	PreEventNoProgressTimeoutSeconds int `yaml:"pre_event_no_progress_timeout_seconds"`
+	// ToolProjection 是工具声明的上游投影形态："native"（默认）把客户端
+	// 说明与 JSON Schema 原样带上 wire；"compat" 回到说明换名、剥 schema
+	// 注解、说明并入 system prompt 的旧形态。全局字段，各 lane 一致。
+	ToolProjection string `yaml:"tool_projection"`
 }
 
 // DebugConfig 保存请求级调试日志配置。
@@ -313,6 +317,15 @@ func (config *Config) Validate(configDir string) error {
 		return err
 	}
 	config.Devin.Aliases = aliases
+	// 空值回落 native；拼写错误尽早 422，不让 reload 静默落到默认形态。
+	switch strings.ToLower(strings.TrimSpace(config.Devin.ToolProjection)) {
+	case "", "native":
+		config.Devin.ToolProjection = "native"
+	case "compat":
+		config.Devin.ToolProjection = "compat"
+	default:
+		return fmt.Errorf(`devin.tool_projection must be "native" or "compat", got %q`, config.Devin.ToolProjection)
+	}
 	if err := config.Devin.resolveAccounts(configDir); err != nil {
 		return err
 	}

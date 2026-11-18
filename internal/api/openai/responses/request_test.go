@@ -170,8 +170,8 @@ func TestDecodeRequestCustomToolDeclaration(t *testing.T) {
 	if !tool.Custom || tool.Name != "apply_patch" {
 		t.Fatalf("tool = %#v, want custom apply_patch", tool)
 	}
-	if string(tool.InputSchema) != string(customToolInputSchema) {
-		t.Fatalf("wrapped schema = %s, want %s", tool.InputSchema, customToolInputSchema)
+	if want := `{"type":"object","properties":{"input":{"type":"string"}},"required":["input"],"additionalProperties":false}`; string(tool.InputSchema) != want {
+		t.Fatalf("wrapped schema = %s, want %s", tool.InputSchema, want)
 	}
 	if tool.Description != "Patch files\n\nInput grammar (lark):\npatch_grammar" {
 		t.Fatalf("description = %q, want grammar appended", tool.Description)

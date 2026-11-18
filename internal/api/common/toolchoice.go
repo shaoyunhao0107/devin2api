@@ -11,7 +11,8 @@ import (
 
 // ParseOpenAIToolChoice 解析 OpenAI 风格的 tool_choice 字段：
 // 字符串 "auto"/"none"/"required"，或对象 {"type":"function","function":{"name":X}}
-// （Responses API 的扁平形态 {"type":"function","name":X} 同样接受）。
+// （Responses API 的扁平形态 {"type":"function","name":X} 与 Chat custom 指名
+// {"type":"custom","custom":{"name":X}} 同样接受）。
 // 空输入与 "auto" 返回 nil（模型自选，与缺省一致）。
 // 非 function 的对象形态（file_search/mcp/allowed_tools 等托管工具约束）
 // 上游没有对应物：记 dropped 透出并按 auto 放行——这类约束指向的工具本来
@@ -39,17 +40,25 @@ func ParseOpenAIToolChoice(raw json.RawMessage, dropped *[]string) (*llm.ToolCho
 		Function struct {
 			Name string `json:"name"`
 		} `json:"function"`
+		Custom struct {
+			Name string `json:"name"`
+		} `json:"custom"`
 	}
 	if err := json.Unmarshal(raw, &object); err != nil {
 		return nil, fmt.Errorf("decode tool_choice: %w", err)
 	}
-	if object.Type != "" && object.Type != "function" {
+	// custom 指名（Chat {"type":"custom","custom":{"name":X}}）与 function
+	// 同语义：custom 工具在 wire 上就是包装后的同名 function。
+	if object.Type != "" && object.Type != "function" && object.Type != "custom" {
 		*dropped = append(*dropped, "tool_choice:"+object.Type)
 		return nil, nil
 	}
 	toolName := object.Name
 	if toolName == "" {
 		toolName = object.Function.Name
+	}
+	if toolName == "" {
+		toolName = object.Custom.Name
 	}
 	if toolName == "" {
 		return nil, fmt.Errorf("tool_choice object requires a function name")

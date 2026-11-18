@@ -69,8 +69,11 @@ func buildRequestSeeded(request llm.RequestMessages, config Config, binding call
 	// tool_choice=none 上游是真执行禁用（实测模型自述「工具被禁用」）：
 	// 工具声明与描述注入对模型都是不可用的噪音，不进 wire。
 	noTools := request.ToolChoice != nil && request.ToolChoice.Mode == llm.ToolChoiceNone
+	// native 投影把说明随 tools[].description 原样上行，system prompt 不再
+	// 重复一份；compat 才走注入段（见 ToolProjection）。
+	projection := config.ToolProjection
 	systemPrompt := request.SystemPrompt
-	if !noTools {
+	if !noTools && projection == ToolProjectionCompat {
 		injected, err := withToolDescriptions(systemPrompt, request.Tools, toolsHash)
 		if err != nil {
 			return nil, repairs, err
@@ -186,7 +189,7 @@ func buildRequestSeeded(request llm.RequestMessages, config Config, binding call
 	result.ChatMessagePrompts, repairs.ReorderedPrompts = pairToolCallsWithResults(result.ChatMessagePrompts)
 	if !noTools {
 		for _, tool := range request.Tools {
-			converted, err := convertToolDefinition(tool, &repairs)
+			converted, err := convertToolDefinition(tool, projection, &repairs)
 			if err != nil {
 				return nil, repairs, err
 			}

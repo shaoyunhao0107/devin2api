@@ -305,8 +305,10 @@ dashboard:
 			// 通用 +"-mutated" 规则对个别字段会产出非法形态：proxy 进
 			// transport 构建（非法即整单拒绝——validate-then-commit 的
 			// 正确行为，测试要的是「变了但合法」），给它固定合法替代值。
+			// tool_projection 是枚举（native/compat），基线归一为 native。
 			mutateOverride := map[string]any{
-				"devin.proxy": "http://127.0.0.2:7890",
+				"devin.proxy":           "http://127.0.0.2:7890",
+				"devin.tool_projection": "compat",
 			}
 			if override, ok := mutateOverride[lf.path]; ok {
 				node[segments[len(segments)-1]] = override

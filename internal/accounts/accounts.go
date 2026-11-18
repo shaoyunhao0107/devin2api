@@ -395,6 +395,8 @@ func BaseConfig(cfg config.Config) devin.Config {
 		QuotaLowThresholdPercent:  cfg.Devin.QuotaLowThresholdPercent,
 		NoProgressTimeout:         time.Duration(cfg.Devin.NoProgressTimeoutSeconds) * time.Second,
 		PreEventNoProgressTimeout: time.Duration(cfg.Devin.PreEventNoProgressTimeoutSeconds) * time.Second,
+		// config.Validate 已把值归一为 native/compat。
+		ToolProjection: devin.ToolProjection(cfg.Devin.ToolProjection),
 		Gate: devin.GateConfig{
 			MaxRPM:          cfg.Devin.MaxRPM,
 			MaxHold:         time.Duration(cfg.Devin.GateMaxHoldSeconds) * time.Second,

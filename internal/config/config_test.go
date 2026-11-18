@@ -34,6 +34,34 @@ func TestLoadParsesListenAddress(t *testing.T) {
 	}
 }
 
+// TestLoadToolProjection 钉 devin.tool_projection 的三态：缺省归一为
+// native、compat 大小写不敏感、未知值在加载期报错而非静默回落。
+func TestLoadToolProjection(t *testing.T) {
+	for value, want := range map[string]string{"": "native", "native": "native", "Compat": "compat", "legacy": ""} {
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		body := "server:\n  listen: ':9090'\n"
+		if value != "" {
+			body += "devin:\n  tool_projection: " + value + "\n"
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := Load(path)
+		if want == "" {
+			if err == nil || !strings.Contains(err.Error(), "devin.tool_projection") {
+				t.Fatalf("tool_projection %q: err = %v, want validation error", value, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("tool_projection %q: %v", value, err)
+		}
+		if loaded.Devin.ToolProjection != want {
+			t.Fatalf("tool_projection %q = %q, want %q", value, loaded.Devin.ToolProjection, want)
+		}
+	}
+}
+
 // TestLoadDisablesDebugLoggingByDefault 的测试动机是保证生产配置未显式开启时不会写入请求内容。
 func TestLoadDisablesDebugLoggingByDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")

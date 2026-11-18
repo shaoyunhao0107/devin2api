@@ -80,6 +80,11 @@ devin:
   #   有内置 180s 硬顶（首发起算、跨重开累计），配大不突破该上限。
   # no_progress_timeout_seconds: 2700
   # pre_event_no_progress_timeout_seconds: 600
+  # tool_projection: 工具声明的上游投影形态，热应用。
+  #   native（默认）：工具说明与 JSON Schema 原样上行，不改 system prompt；
+  #   compat：说明换成工具名、剥 schema 注解、说明并入 system prompt，
+  #   上游拒收原生说明时用它回退。详见 docs/native-tools.md。
+  # tool_projection: native
   # model: "glm-5-2"
   model: "swe-2-max"
   # 代理地址（可选）；支持 http://、https://、socks5://、socks5h://

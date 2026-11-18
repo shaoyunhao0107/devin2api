@@ -133,6 +133,10 @@ type Config struct {
 	// upstreamPreEventSilenceCap 硬顶（从首发起算、跨重开累计），
 	// 配得比 180s 大不会突破累计上限。全局字段各 lane 一致。
 	PreEventNoProgressTimeout time.Duration
+	// ToolProjection 是工具声明的 wire 投影形态（devin.tool_projection）：
+	// 空值与 native 同义——说明/schema 原样上行；compat 回到「说明换名 +
+	// 剥注解 + system 注入段」旧形态。全局字段各 lane 一致。
+	ToolProjection ToolProjection
 }
 
 // ClientIdentity 返回请求要携带的客户端身份；空字段回落到与真实

@@ -1,0 +1,108 @@
+{
+  "cascadeId": "f5f43d65-7d45-42ae-8de1-567fedc63f3e",
+  "chatMessagePrompts": [
+    {
+      "messageId": "<volatile>",
+      "prompt": "read both and patch",
+      "source": "ExaCodeiumCommonPb_ChatMessageSource_CHAT_MESSAGE_SOURCE_USER"
+    },
+    {
+      "messageId": "<volatile>",
+      "signature": "sig-1",
+      "signatureType": "anthropic",
+      "source": "ExaCodeiumCommonPb_ChatMessageSource_CHAT_MESSAGE_SOURCE_SYSTEM",
+      "thinking": "need both files",
+      "thinkingRedacted": false,
+      "toolCalls": [
+        {
+          "argumentsJson": "{\"path\":\"a.go\"}",
+          "id": "call_a",
+          "name": "read_file"
+        },
+        {
+          "argumentsJson": "{\"path\":\"b.go\"}",
+          "id": "call_b",
+          "name": "read_file"
+        },
+        {
+          "id": "call_p",
+          "invalidJsonStr": "*** Begin Patch\n*** End Patch",
+          "isCustomToolCall": true,
+          "name": "apply_patch"
+        }
+      ]
+    },
+    {
+      "messageId": "<volatile>",
+      "prompt": "package a",
+      "source": "ExaCodeiumCommonPb_ChatMessageSource_CHAT_MESSAGE_SOURCE_TOOL",
+      "toolCallId": "call_a",
+      "toolResultIsError": false
+    },
+    {
+      "messageId": "<volatile>",
+      "prompt": "package b",
+      "source": "ExaCodeiumCommonPb_ChatMessageSource_CHAT_MESSAGE_SOURCE_TOOL",
+      "toolCallId": "call_b",
+      "toolResultIsError": false
+    },
+    {
+      "messageId": "<volatile>",
+      "prompt": "patch failed",
+      "promptCacheOptions": {
+        "type": "ExaChatPb_CacheControlType_CACHE_CONTROL_TYPE_EPHEMERAL"
+      },
+      "source": "ExaCodeiumCommonPb_ChatMessageSource_CHAT_MESSAGE_SOURCE_TOOL",
+      "toolCallId": "call_p",
+      "toolResultIsError": true
+    }
+  ],
+  "chatModelUid": "glm-5-2",
+  "configuration": {
+    "maxNewlines": "400",
+    "maxTokens": "128000",
+    "numCompletions": "1",
+    "temperature": 1,
+    "topK": "40",
+    "topP": 0.95
+  },
+  "executionId": "<volatile>",
+  "metadata": {
+    "apiKey": "golden-token",
+    "extensionName": "chisel",
+    "extensionVersion": "3000.2.17",
+    "f": "<volatile>",
+    "ideName": "chisel",
+    "ideVersion": "3000.2.17",
+    "locale": "en",
+    "os": "mac"
+  },
+  "plannerMode": "ExaCodeiumCommonPb_ConversationalPlannerMode_CONVERSATIONAL_PLANNER_MODE_DEFAULT",
+  "prompt": "You are a coding assistant.",
+  "promptCacheKey": "b5fe0e352219bd7f8874bd096919cb63",
+  "requestType": "CHAT_MESSAGE_REQUEST_TYPE_CASCADE",
+  "systemPromptCacheOptions": {
+    "type": "ExaChatPb_CacheControlType_CACHE_CONTROL_TYPE_EPHEMERAL"
+  },
+  "toolChoice": {
+    "toolName": "read_file"
+  },
+  "tools": [
+    {
+      "description": "Read a file",
+      "jsonSchemaString": "{\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"],\"type\":\"object\"}",
+      "name": "read_file"
+    },
+    {
+      "description": "Apply a patch.",
+      "jsonSchemaString": "{\"additionalProperties\":false,\"properties\":{\"input\":{\"type\":\"string\"}},\"required\":[\"input\"],\"type\":\"object\"}",
+      "name": "apply_patch"
+    }
+  ],
+  "trajectoryReference": {
+    "stepIndex": "<volatile>",
+    "stepType": "ExaCortexPb_CortexStepType_CORTEX_STEP_TYPE_USER_INPUT",
+    "trajectoryId": "b5fe0e35-2219-4d7f-8874-bd096919cb63",
+    "trajectoryType": "ExaCortexPb_CortexTrajectoryType_CORTEX_TRAJECTORY_TYPE_CASCADE"
+  }
+}

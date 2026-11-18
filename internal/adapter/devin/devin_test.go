@@ -161,7 +161,7 @@ func TestBuildRequestMapsLoopMessages(t *testing.T) {
 			{Name: "read", Description: "read file", InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`)},
 		},
 	}
-	converted, _, err := buildRequest(request, Config{}, callBinding{Token: "token", Model: "model"})
+	converted, _, err := buildRequest(request, Config{ToolProjection: ToolProjectionCompat}, callBinding{Token: "token", Model: "model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,13 +517,66 @@ func TestBuildRequestIgnoresEmptyToolDescriptions(t *testing.T) {
 			{Name: "read", Description: "  read a file  ", InputSchema: json.RawMessage(`{"type":"object"}`)},
 		},
 	}
-	converted, _, err := buildRequest(request, Config{}, callBinding{Token: "token", Model: "model"})
+	converted, _, err := buildRequest(request, Config{ToolProjection: ToolProjectionCompat}, callBinding{Token: "token", Model: "model"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := "system\n\n# tools descriptions\n<tool name=\"read\">\n1. read a file\n</tool>"
 	if converted.GetPrompt() != want {
 		t.Fatalf("prompt = %q, want %q", converted.GetPrompt(), want)
+	}
+}
+
+// TestBuildRequestNativeProjectionKeepsToolSemantics 钉 native（零值默认）
+// 投影的字段级语义：system prompt 原样、description 进 tools[]、schema 的
+// 字段 description/enum/anyOf/required/strict/read_only 不被剥，本地 $ref
+// 展开并计入 repairs；空说明回落工具名。
+func TestBuildRequestNativeProjectionKeepsToolSemantics(t *testing.T) {
+	request := llm.RequestMessages{
+		SystemPrompt: "system\n",
+		Messages:     []llm.Message{llm.UserMessage{Content: []llm.Content{llm.TextContent{Text: "go"}}}},
+		Tools: []llm.ToolDefinition{
+			{Name: "edit_file", Description: "Edit a file.", InputSchema: json.RawMessage(nativeGoldenSchema), Strict: true, ReadOnlyHint: true},
+			{Name: "empty", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		},
+	}
+	converted, repairs, err := buildRequest(request, Config{}, callBinding{Token: "token", Model: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converted.GetPrompt() != "system\n" {
+		t.Fatalf("native projection must not touch the system prompt: %q", converted.GetPrompt())
+	}
+	if repairs.SchemaRefDropped != 0 {
+		t.Fatalf("resolvable $ref must inline without dropping: %d", repairs.SchemaRefDropped)
+	}
+	edit, empty := converted.GetTools()[0], converted.GetTools()[1]
+	if edit.GetDescription() != "Edit a file." || !edit.GetStrict() || !edit.GetReadOnlyHint() {
+		t.Fatalf("edit_file declaration = %#v", edit)
+	}
+	if empty.GetDescription() != "empty" {
+		t.Fatalf("empty description must fall back to the tool name: %q", empty.GetDescription())
+	}
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(edit.GetJsonSchemaString()), &schema); err != nil {
+		t.Fatal(err)
+	}
+	properties := schema["properties"].(map[string]any)
+	mode := properties["mode"].(map[string]any)
+	if mode["description"] != "How to apply the edit" || len(mode["enum"].([]any)) != 2 {
+		t.Fatalf("mode = %#v", mode)
+	}
+	if _, ok := properties["content"].(map[string]any)["anyOf"]; !ok {
+		t.Fatalf("anyOf dropped: %#v", properties["content"])
+	}
+	if rangeSchema := properties["range"].(map[string]any); rangeSchema["type"] != "object" || rangeSchema["$ref"] != nil {
+		t.Fatalf("$ref not inlined: %#v", rangeSchema)
+	}
+	if _, ok := schema["$defs"]; ok {
+		t.Fatalf("$defs must be stripped after inlining")
+	}
+	if schema["description"] != "Arguments for edit_file" || len(schema["required"].([]any)) != 2 {
+		t.Fatalf("top-level annotations/required lost: %#v", schema)
 	}
 }
 

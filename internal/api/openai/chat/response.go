@@ -41,6 +41,8 @@ type toolCallState struct {
 	index int
 	id    string
 	name  string
+	// custom 标记 freeform 调用：增量走 custom.input 而非 function.arguments。
+	custom bool
 }
 
 // NewStreamEncoder 为一次 Chat Completions 流创建编码状态。
@@ -187,31 +189,42 @@ func (encoder *StreamEncoder) endThinking(event llm.ResponseEvent) ([]SSEEvent, 
 }
 
 // startToolCall 登记工具调用状态并发带 id/name 的 tool_calls 首帧。
+// custom 声明工具的调用（解码器按声明名在 start 前置 Custom）按 Chat
+// custom tool call 形态下发：type:"custom" + custom.{name,input}。
 func (encoder *StreamEncoder) startToolCall(event llm.ResponseEvent) []SSEEvent {
 	state := &toolCallState{index: len(encoder.toolCalls), id: event.ToolCallID, name: event.ToolName}
+	if call, ok := common.ContentAt[llm.ToolCall](event.Partial, event.ContentIndex); ok {
+		state.custom = call.Custom
+	}
 	encoder.toolCalls = append(encoder.toolCalls, state)
 	encoder.toolByContent[event.ContentIndex] = state
+	call := chatToolCall{Index: state.index, ID: state.id}
+	if state.custom {
+		call.Type = "custom"
+		call.Custom = &chatCustomCall{Name: state.name}
+	} else {
+		call.Type = "function"
+		call.Function = &chatToolCallFunction{Name: state.name}
+	}
 	return []SSEEvent{encoder.chunk([]chatChoice{{
-		Delta: chatDelta{ToolCalls: []chatToolCall{{
-			Index:    state.index,
-			ID:       state.id,
-			Type:     "function",
-			Function: chatToolCallFunction{Name: state.name},
-		}}},
+		Delta: chatDelta{ToolCalls: []chatToolCall{call}},
 	}}, nil)}
 }
 
-// toolCallDelta 下发一段工具参数增量。
+// toolCallDelta 下发一段工具参数增量（custom 调用是 input 原文增量）。
 func (encoder *StreamEncoder) toolCallDelta(event llm.ResponseEvent) ([]SSEEvent, error) {
 	state := encoder.findTool(event.ToolCallID, event.ContentIndex)
 	if state == nil {
 		return nil, fmt.Errorf("tool call delta at content index %d (call %q) without toolcall_start", event.ContentIndex, event.ToolCallID)
 	}
+	call := chatToolCall{Index: state.index}
+	if state.custom {
+		call.Custom = &chatCustomCall{Input: event.Delta}
+	} else {
+		call.Function = &chatToolCallFunction{Arguments: event.Delta}
+	}
 	return []SSEEvent{encoder.chunk([]chatChoice{{
-		Delta: chatDelta{ToolCalls: []chatToolCall{{
-			Index:    state.index,
-			Function: chatToolCallFunction{Arguments: event.Delta},
-		}}},
+		Delta: chatDelta{ToolCalls: []chatToolCall{call}},
 	}}, nil)}, nil
 }
 
@@ -302,17 +315,26 @@ type chatDelta struct {
 }
 
 // chatToolCall 是 delta.tool_calls 的元素：start 事件带 id/type/name，
-// 参数增量帧只有 function.arguments 与 index。
+// 参数增量帧只有 function.arguments（custom 调用为 custom.input）与 index。
+// function 与 custom 二选一非空，function 调用的输出与旧形态逐字节一致。
 type chatToolCall struct {
-	Function chatToolCallFunction `json:"function"`
-	ID       string               `json:"id,omitempty"`
-	Index    int                  `json:"index"`
-	Type     string               `json:"type,omitempty"`
+	Custom   *chatCustomCall       `json:"custom,omitempty"`
+	Function *chatToolCallFunction `json:"function,omitempty"`
+	ID       string                `json:"id,omitempty"`
+	Index    int                   `json:"index"`
+	Type     string                `json:"type,omitempty"`
 }
 
 type chatToolCallFunction struct {
 	Arguments string `json:"arguments"`
 	Name      string `json:"name,omitempty"`
+}
+
+// chatCustomCall 是 custom 调用的增量载体：start 帧带 name 与空 input，
+// 后续帧只带 input 片段。
+type chatCustomCall struct {
+	Input string `json:"input"`
+	Name  string `json:"name,omitempty"`
 }
 
 // chunk 把 choices/usage 装进固定 envelope marshal 成一帧 SSE。
@@ -345,6 +367,14 @@ func messageToChat(message *llm.AssistantMessage) map[string]any {
 				reasoningParts = append(reasoningParts, content.Thinking)
 			}
 		case llm.ToolCall:
+			if content.Custom {
+				toolCalls = append(toolCalls, map[string]any{
+					"id":     content.ID,
+					"type":   "custom",
+					"custom": map[string]any{"name": content.Name, "input": string(content.Arguments)},
+				})
+				continue
+			}
 			toolCalls = append(toolCalls, map[string]any{
 				"id":       content.ID,
 				"type":     "function",

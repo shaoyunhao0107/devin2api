@@ -338,6 +338,11 @@ var configFields = []ConfigField{
 		Get:     secondsOf(func(c Config) time.Duration { return c.PreEventNoProgressTimeout }),
 		Set:     setSeconds(func(c *Config) *time.Duration { return &c.PreEventNoProgressTimeout }),
 	},
+	{
+		// 只经 config.yaml + reload 热应用，不进面板（Get/Set 留空）。
+		Key:     "devin.tool_projection",
+		changed: func(p, n Config) bool { return p.ToolProjection != n.ToolProjection },
+	},
 }
 
 // linkFieldKeys 是 AffectsLink 字段的静态键集（端点三件套）。

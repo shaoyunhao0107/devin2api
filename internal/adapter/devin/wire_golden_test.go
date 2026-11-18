@@ -9,6 +9,7 @@ package devin
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,8 +22,9 @@ import (
 // wireGoldenCases 每个用例钉一份完整上游请求；SessionKey 互不相同，
 // 避免 trajectory 派生互相影响。
 var wireGoldenCases = map[string]struct {
-	request llm.RequestMessages
-	binding callBinding
+	request    llm.RequestMessages
+	binding    callBinding
+	projection ToolProjection
 }{
 	// 单轮文本 + 工具声明：钉 prompt 拼装、工具声明形状、
 	// 工具描述注入 system prompt 的位置。
@@ -40,7 +42,8 @@ var wireGoldenCases = map[string]struct {
 				ReadOnlyHint: true,
 			}},
 		},
-		binding: callBinding{Token: "golden-token", Model: "glm-5-2"},
+		binding:    callBinding{Token: "golden-token", Model: "glm-5-2"},
+		projection: ToolProjectionCompat,
 	},
 	// assistant 工具调用 + 工具结果 + 追轮：钉 call→result 配对重排、
 	// step/角色枚举、TOOL 结果正文形态。
@@ -63,7 +66,8 @@ var wireGoldenCases = map[string]struct {
 				InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
 			}},
 		},
-		binding: callBinding{Token: "golden-token", Model: "glm-5-2"},
+		binding:    callBinding{Token: "golden-token", Model: "glm-5-2"},
+		projection: ToolProjectionCompat,
 	},
 	// tool_choice=none：钉「工具声明与描述注入整体不进 wire」的真禁用语义。
 	"tool_choice_none": {
@@ -80,7 +84,8 @@ var wireGoldenCases = map[string]struct {
 				InputSchema: json.RawMessage(`{"type":"object"}`),
 			}},
 		},
-		binding: callBinding{Token: "golden-token", Model: "glm-5-2"},
+		binding:    callBinding{Token: "golden-token", Model: "glm-5-2"},
+		projection: ToolProjectionCompat,
 	},
 	// thinking 重放：钉 ThinkingContent 的 signature/signature_type 映射。
 	"thinking_replay": {
@@ -96,7 +101,8 @@ var wireGoldenCases = map[string]struct {
 				llm.UserMessage{Content: []llm.Content{llm.TextContent{Text: "go on"}}},
 			},
 		},
-		binding: callBinding{Token: "golden-token", Model: "glm-5-2"},
+		binding:    callBinding{Token: "golden-token", Model: "glm-5-2"},
+		projection: ToolProjectionCompat,
 	},
 	// 采样参数 + 指名 tool_choice + router jwt：钉 configuration 透传与
 	// ModelAssignmentJwt / ToolName 字段落位。
@@ -120,7 +126,8 @@ var wireGoldenCases = map[string]struct {
 				InputSchema: json.RawMessage(`{"type":"object"}`),
 			}},
 		},
-		binding: callBinding{Token: "golden-token", Model: "glm-5-2", ModelAssignmentJWT: "golden-router-jwt"},
+		binding:    callBinding{Token: "golden-token", Model: "glm-5-2", ModelAssignmentJWT: "golden-router-jwt"},
+		projection: ToolProjectionCompat,
 	},
 	// 当前轮图片：钉 Images 只挂最后一条助手消息之后的 user/tool 消息。
 	"current_turn_image": {
@@ -134,6 +141,62 @@ var wireGoldenCases = map[string]struct {
 					llm.TextContent{Text: "here"},
 					llm.ImageContent{Data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", MIMEType: "image/png"},
 				}},
+			},
+		},
+		binding:    callBinding{Token: "golden-token", Model: "glm-5-2"},
+		projection: ToolProjectionCompat,
+	},
+}
+
+// nativeGoldenSchema 覆盖 native 投影必须原样保留的 schema 关键字：
+// 字段 description/title、enum、anyOf、required、additionalProperties，
+// 以及要被展开的本地 $ref（$defs 随之剥掉，其余不动）。
+const nativeGoldenSchema = `{"type":"object","title":"Edit args","description":"Arguments for edit_file","properties":{"path":{"type":"string","description":"Workspace-relative path"},"mode":{"type":"string","enum":["replace","append"],"description":"How to apply the edit"},"range":{"$ref":"#/$defs/range"},"content":{"anyOf":[{"type":"string"},{"type":"null"}],"description":"New text; null deletes the range"}},"required":["path","mode"],"additionalProperties":false,"$defs":{"range":{"type":"object","properties":{"start":{"type":"integer"},"end":{"type":"integer"}},"required":["start"]}}}`
+
+// nativeGoldenCases 钉 native 投影（默认）的 wire 形态：说明进
+// tools[].description、schema 保留注解与约束、system prompt 不追加
+// 工具说明段；并行多调用 + 乱序结果 + custom 历史调用的配对回放。
+var nativeGoldenCases = map[string]struct {
+	request llm.RequestMessages
+	binding callBinding
+}{
+	"native_tools_schema": {
+		request: llm.RequestMessages{
+			SessionKey:   "golden-native-schema",
+			SystemPrompt: "You are a coding assistant.",
+			ToolChoice:   &llm.ToolChoice{Mode: llm.ToolChoiceRequired},
+			Messages: []llm.Message{llm.UserMessage{Content: []llm.Content{
+				llm.TextContent{Text: "fix the header"},
+			}}},
+			Tools: []llm.ToolDefinition{
+				{Name: "edit_file", Description: "Edit a file in place.\nUse for small changes.", InputSchema: json.RawMessage(nativeGoldenSchema), Strict: true},
+				{Name: "read_file", Description: "Read a file", InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"File path"}},"required":["path"]}`), ReadOnlyHint: true},
+				{Name: "apply_patch", Description: "Apply a patch.\n\nInput grammar (lark):\nstart: patch", InputSchema: json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}},"required":["input"],"additionalProperties":false}`), Custom: true},
+				{Name: "noop", InputSchema: json.RawMessage(`{"type":"object"}`)},
+			},
+		},
+		binding: callBinding{Token: "golden-token", Model: "glm-5-2"},
+	},
+	"native_parallel_roundtrip": {
+		request: llm.RequestMessages{
+			SessionKey:   "golden-native-parallel",
+			SystemPrompt: "You are a coding assistant.",
+			ToolChoice:   &llm.ToolChoice{Mode: llm.ToolChoiceNamed, ToolName: "read_file"},
+			Messages: []llm.Message{
+				llm.UserMessage{Content: []llm.Content{llm.TextContent{Text: "read both and patch"}}},
+				llm.AssistantMessage{Content: []llm.Content{
+					llm.ThinkingContent{Thinking: "need both files", Signature: "sig-1", SignatureType: "anthropic"},
+					llm.ToolCall{ID: "call_a", Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)},
+					llm.ToolCall{ID: "call_b", Name: "read_file", Arguments: json.RawMessage(`{"path":"b.go"}`)},
+					llm.ToolCall{ID: "call_p", Name: "apply_patch", Arguments: json.RawMessage("*** Begin Patch\n*** End Patch"), Custom: true},
+				}},
+				llm.ToolResultMessage{ToolCallID: "call_b", Content: []llm.Content{llm.TextContent{Text: "package b"}}},
+				llm.ToolResultMessage{ToolCallID: "call_a", Content: []llm.Content{llm.TextContent{Text: "package a"}}},
+				llm.ToolResultMessage{ToolCallID: "call_p", Content: []llm.Content{llm.TextContent{Text: "patch failed"}}, IsError: true},
+			},
+			Tools: []llm.ToolDefinition{
+				{Name: "read_file", Description: "Read a file", InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`)},
+				{Name: "apply_patch", Description: "Apply a patch.", InputSchema: json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}},"required":["input"],"additionalProperties":false}`), Custom: true},
 			},
 		},
 		binding: callBinding{Token: "golden-token", Model: "glm-5-2"},
@@ -205,9 +268,18 @@ func marshalCanonicalJSON(doc map[string]any) ([]byte, error) {
 func TestWireGolden(t *testing.T) {
 	dir := filepath.Join("testdata", "wire")
 	update := os.Getenv("UPDATE_GOLDEN") == "1"
-	for name, testCase := range wireGoldenCases {
+	cases := maps.Clone(wireGoldenCases)
+	for name, native := range nativeGoldenCases {
+		// projection 留空：钉「零值配置即 native」这一默认语义。
+		cases[name] = struct {
+			request    llm.RequestMessages
+			binding    callBinding
+			projection ToolProjection
+		}{request: native.request, binding: native.binding}
+	}
+	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
-			converted, _, err := buildRequest(testCase.request, Config{}, testCase.binding)
+			converted, _, err := buildRequest(testCase.request, Config{ToolProjection: testCase.projection}, testCase.binding)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -16,6 +16,7 @@
 | devin.accounts（声明基座；与面板行叠加出的生效集驱动 lane 增删改，含逐号 priority/max_rpm）                                                              |                            |
 | devin.max_rpm 及 devin.gate_* 全部闸门参数                                                                                                               |                            |
 | devin.session_affinity_ttl_seconds / devin.quota_low_threshold_percent / devin.no_progress_timeout_seconds / devin.pre_event_no_progress_timeout_seconds |                            |
+| devin.tool_projection（native/compat，只走 config.yaml，不进面板）                                                                                       |                            |
 | devin.warm_prefix_* 全部保温参数（总开关热更即时停/启调度循环）                                                                                          |                            |
 | dashboard.password                                                                                                                                       |                            |
 | debug.enabled / debug.errors_only / debug.retention（retention_days/max_total_mb/payload_hours/keep_error_dirs 合报单名）                                |                            |

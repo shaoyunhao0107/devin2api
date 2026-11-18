@@ -53,11 +53,16 @@ type Message struct {
 	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 
-// ToolCall 是助手消息中的工具调用（也用于流式增量）。
+// ToolCall 是助手消息中的工具调用（也用于流式增量）：type 为 function
+// 时读 Function，为 custom 时读 Custom（freeform 原文 input）。
 type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"`
 	Function FunctionCall `json:"function"`
+	Custom   *struct {
+		Name  string `json:"name"`
+		Input string `json:"input"`
+	} `json:"custom,omitempty"`
 }
 
 // FunctionCall 是工具调用的函数部分。
@@ -74,6 +79,10 @@ type Tool struct {
 	// 但被丢弃」记账，function 条目的名字仍在 Function.Name。
 	Name     string       `json:"name,omitempty"`
 	Function FunctionTool `json:"function"`
+	// Custom 是 type:"custom" 声明的详情（freeform 工具，format 可带
+	// lark/regex grammar）；上行包装成单 input 参数 function，见
+	// common.CustomToolDefinition。
+	Custom *CustomTool `json:"custom,omitempty"`
 }
 
 // FunctionTool 是 function 工具详情。
@@ -81,6 +90,22 @@ type FunctionTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Parameters  json.RawMessage `json:"parameters"`
+	// Strict 是 structured-outputs 严格模式标记；上游同名位实测接受，透传。
+	Strict *bool `json:"strict,omitempty"`
+}
+
+// CustomTool 是 Chat Completions custom 工具详情：format.type 为 text 时
+// 无 grammar，为 grammar 时 grammar.{syntax,definition} 是输入语法。
+type CustomTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Format      *struct {
+		Type    string `json:"type"`
+		Grammar *struct {
+			Syntax     string `json:"syntax"`
+			Definition string `json:"definition"`
+		} `json:"grammar,omitempty"`
+	} `json:"format,omitempty"`
 }
 
 // StreamOptions 是流式额外选项。
@@ -202,6 +227,14 @@ func DecodeRequest(data []byte, collectDropped bool) (AdaptedRequest, error) {
 	}
 	droppedTools := make(map[string]bool)
 	for _, tool := range request.Tools {
+		if tool.Type == "custom" && tool.Custom != nil && tool.Custom.Name != "" {
+			var syntax, grammar string
+			if format := tool.Custom.Format; format != nil && format.Grammar != nil {
+				syntax, grammar = format.Grammar.Syntax, format.Grammar.Definition
+			}
+			context.Tools = append(context.Tools, common.CustomToolDefinition(tool.Custom.Name, tool.Custom.Description, syntax, grammar))
+			continue
+		}
 		if tool.Type != "function" {
 			context.Dropped = append(context.Dropped, "tool:"+tool.Type)
 			// 声明了但被丢的条目记下名字：tool_choice 指名它时按
@@ -217,11 +250,15 @@ func DecodeRequest(data []byte, collectDropped bool) (AdaptedRequest, error) {
 		if len(schema) == 0 {
 			schema = json.RawMessage(`{"type":"object"}`)
 		}
-		context.Tools = append(context.Tools, llm.ToolDefinition{
+		definition := llm.ToolDefinition{
 			Name:        tool.Function.Name,
 			Description: tool.Function.Description,
 			InputSchema: schema,
-		})
+		}
+		if tool.Function.Strict != nil {
+			definition.Strict = *tool.Function.Strict
+		}
+		context.Tools = append(context.Tools, definition)
 	}
 	// functions 是旧版工具声明形态：与 tools 同构，直接并入。
 	for _, fn := range request.Functions {
@@ -384,6 +421,18 @@ func decodeAssistantContent(context *llm.RequestMessages, message Message, callI
 		content = append(content, llm.ThinkingContent{Thinking: message.ReasoningContent})
 	}
 	for _, call := range message.ToolCalls {
+		if call.Type == "custom" && call.Custom != nil {
+			// custom 调用的 input 是 freeform 原文：走 Custom 通道原样回放
+			// （wire invalid_json_str + is_custom_tool_call）。
+			callIDs[call.ID] = struct{}{}
+			content = append(content, llm.ToolCall{
+				ID:        call.ID,
+				Name:      call.Custom.Name,
+				Arguments: json.RawMessage(call.Custom.Input),
+				Custom:    true,
+			})
+			continue
+		}
 		if call.Type != "" && call.Type != "function" {
 			context.Dropped = append(context.Dropped, "tool_call:"+call.Type)
 			continue

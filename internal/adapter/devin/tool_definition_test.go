@@ -71,7 +71,7 @@ func TestConvertToolDefinitionStripsAnnotationsButKeepsSchema(t *testing.T) {
 				"required":["description","title"],
 				"additionalProperties":false
 			}`),
-	}, &llm.RequestRepairs{})
+	}, ToolProjectionCompat, &llm.RequestRepairs{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,10 +438,10 @@ func TestConvertToolDefinitionCountsDroppedRefsAcrossCache(t *testing.T) {
 		}`),
 	}
 	var first, second llm.RequestRepairs
-	if _, err := convertToolDefinition(tool, &first); err != nil {
+	if _, err := convertToolDefinition(tool, ToolProjectionCompat, &first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := convertToolDefinition(tool, &second); err != nil {
+	if _, err := convertToolDefinition(tool, ToolProjectionCompat, &second); err != nil {
 		t.Fatal(err)
 	}
 	// a↔b 循环：b 的 $ref→a 撞上 resolving 集合剥掉，恰好一次。
@@ -483,7 +483,7 @@ func TestConvertToolDefinitionSynthesizesAnyOfOnRealFixture(t *testing.T) {
 	}
 	sawScheduleWakeup := false
 	for _, item := range fixture.Tools {
-		converted, err := convertToolDefinition(llm.ToolDefinition{Name: item.Name, InputSchema: item.InputSchema}, &llm.RequestRepairs{})
+		converted, err := convertToolDefinition(llm.ToolDefinition{Name: item.Name, InputSchema: item.InputSchema}, ToolProjectionCompat, &llm.RequestRepairs{})
 		if err != nil {
 			t.Fatalf("%s: %v", item.Name, err)
 		}

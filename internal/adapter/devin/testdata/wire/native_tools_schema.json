@@ -1,0 +1,73 @@
+{
+  "cascadeId": "ae29bf34-5abb-4052-8009-9728dd753741",
+  "chatMessagePrompts": [
+    {
+      "messageId": "<volatile>",
+      "prompt": "fix the header",
+      "promptCacheOptions": {
+        "type": "ExaChatPb_CacheControlType_CACHE_CONTROL_TYPE_EPHEMERAL"
+      },
+      "source": "ExaCodeiumCommonPb_ChatMessageSource_CHAT_MESSAGE_SOURCE_USER"
+    }
+  ],
+  "chatModelUid": "glm-5-2",
+  "configuration": {
+    "maxNewlines": "400",
+    "maxTokens": "128000",
+    "numCompletions": "1",
+    "temperature": 1,
+    "topK": "40",
+    "topP": 0.95
+  },
+  "executionId": "<volatile>",
+  "metadata": {
+    "apiKey": "golden-token",
+    "extensionName": "chisel",
+    "extensionVersion": "3000.2.17",
+    "f": "<volatile>",
+    "ideName": "chisel",
+    "ideVersion": "3000.2.17",
+    "locale": "en",
+    "os": "mac"
+  },
+  "plannerMode": "ExaCodeiumCommonPb_ConversationalPlannerMode_CONVERSATIONAL_PLANNER_MODE_DEFAULT",
+  "prompt": "You are a coding assistant.",
+  "promptCacheKey": "13a70a5b6f00b9c62be8553590010c68",
+  "requestType": "CHAT_MESSAGE_REQUEST_TYPE_CASCADE",
+  "systemPromptCacheOptions": {
+    "type": "ExaChatPb_CacheControlType_CACHE_CONTROL_TYPE_EPHEMERAL"
+  },
+  "toolChoice": {
+    "optionName": "required"
+  },
+  "tools": [
+    {
+      "description": "Edit a file in place.\nUse for small changes.",
+      "jsonSchemaString": "{\"additionalProperties\":false,\"description\":\"Arguments for edit_file\",\"properties\":{\"content\":{\"anyOf\":[{\"type\":\"string\"},{\"type\":\"null\"}],\"description\":\"New text; null deletes the range\"},\"mode\":{\"description\":\"How to apply the edit\",\"enum\":[\"replace\",\"append\"],\"type\":\"string\"},\"path\":{\"description\":\"Workspace-relative path\",\"type\":\"string\"},\"range\":{\"properties\":{\"end\":{\"type\":\"integer\"},\"start\":{\"type\":\"integer\"}},\"required\":[\"start\"],\"type\":\"object\"}},\"required\":[\"path\",\"mode\"],\"title\":\"Edit args\",\"type\":\"object\"}",
+      "name": "edit_file",
+      "strict": true
+    },
+    {
+      "description": "Read a file",
+      "jsonSchemaString": "{\"properties\":{\"path\":{\"description\":\"File path\",\"type\":\"string\"}},\"required\":[\"path\"],\"type\":\"object\"}",
+      "name": "read_file",
+      "readOnlyHint": true
+    },
+    {
+      "description": "Apply a patch.\n\nInput grammar (lark):\nstart: patch",
+      "jsonSchemaString": "{\"additionalProperties\":false,\"properties\":{\"input\":{\"type\":\"string\"}},\"required\":[\"input\"],\"type\":\"object\"}",
+      "name": "apply_patch"
+    },
+    {
+      "description": "noop",
+      "jsonSchemaString": "{\"type\":\"object\"}",
+      "name": "noop"
+    }
+  ],
+  "trajectoryReference": {
+    "stepIndex": "<volatile>",
+    "stepType": "ExaCortexPb_CortexStepType_CORTEX_STEP_TYPE_USER_INPUT",
+    "trajectoryId": "13a70a5b-6f00-49c6-abe8-553590010c68",
+    "trajectoryType": "ExaCortexPb_CortexTrajectoryType_CORTEX_TRAJECTORY_TYPE_CASCADE"
+  }
+}

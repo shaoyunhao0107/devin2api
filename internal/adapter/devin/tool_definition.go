@@ -1,4 +1,5 @@
-// 本文件把中间工具定义转换为 Devin 原生函数工具，并把被屏蔽的工具说明注入系统提示词。
+// 本文件把中间工具定义转换为 Devin 原生函数工具：native 投影（默认）原样
+// 携带说明与 schema；compat 投影剥注解并把说明注入系统提示词。
 package devin
 
 import (
@@ -611,14 +612,34 @@ type cachedToolDefinition struct {
 // toolDefKey 是 toolDefinitionCache 的键：schema 取 sha256 定长指纹
 // 而非原文拼串——原 string(InputSchema) 键每工具每请求拷一份全量
 // schema（CC 28 工具 ~140KB/req），map 哈希还要再扫一遍这些字节。
+// native 时 description 进 wire，descriptionSum 随之进键；compat 下恒零值。
 type toolDefKey struct {
-	name       string
-	schemaSum  [32]byte
-	strict     bool
-	readOnly   bool
-	serverName string
-	attribKey  string
+	name           string
+	schemaSum      [32]byte
+	descriptionSum [32]byte
+	projection     ToolProjection
+	strict         bool
+	readOnly       bool
+	serverName     string
+	attribKey      string
 }
+
+// ToolProjection 选择工具声明投影到 Devin wire 的形态（devin.tool_projection）。
+type ToolProjection string
+
+const (
+	// ToolProjectionNative 是默认形态：tools[].description 发客户端原始说明，
+	// json_schema_string 保留原始 schema（含字段 description/title/enum/anyOf
+	// 等），只做上游确定性拒绝的两种归一（本地 $ref 展开、裸属性 map 包裹，
+	// 见 normalizeSchema，剥 $ref 计入 repairs.SchemaRefDropped）；system
+	// prompt 不追加工具说明段。与真实 CLI 抓包形态一致（tools[].description
+	// 带完整自然语言说明）。
+	ToolProjectionNative ToolProjection = "native"
+	// ToolProjectionCompat 是旧形态：description 换成工具名、schema 剥自然
+	// 语言注解，说明全文与字段摘要并入 system prompt 的 # tools descriptions
+	// 段（withToolDescriptions）。用于上游对原生说明/注解出现拒绝时回退。
+	ToolProjectionCompat ToolProjection = "compat"
+)
 
 // convertToolDefinition 保留工具身份和 JSON Schema 约束，仅移除自然语言注释。
 // 工具名的字符集校验在 llm.ToolDefinition.Validate 入口完成（上游实测只
@@ -637,16 +658,26 @@ type toolDefKey struct {
 // 注解已实证触发上游工具分类（isNaturalLanguageAnnotation），description
 // 字段喂养的是同一条上游工具认知通道；把真描述转投 system prompt 是在
 // 保留语义信息的同时避开该通道的指纹/分类面。属指纹对抗遗留决策：上游
-// 从未被实证拒绝真描述，若要恢复真描述应先跑探针验证再改这里。
-func convertToolDefinition(tool llm.ToolDefinition, repairs *llm.RequestRepairs) (*devinproto.ExaChatPb_ChatToolDefinition, error) {
+// 从未被实证拒绝真描述——这条形态现在只在 projection=compat 下生效。
+//
+// projection=native（默认）时 description 发客户端原文（空说明回落工具名，
+// 保持字段非空的既有 wire 形态），schema 不剥注解、不合成 anyOf，只跑
+// normalizeSchema 的两种确定性归一。
+func convertToolDefinition(tool llm.ToolDefinition, projection ToolProjection, repairs *llm.RequestRepairs) (*devinproto.ExaChatPb_ChatToolDefinition, error) {
+	native := projection != ToolProjectionCompat
 	// 缓存键覆盖全部影响 wire 形态的字段：透传位不同的同名同 schema
 	// 工具不能共享条目。
 	cacheKey := toolDefKey{
 		name:       tool.Name,
 		schemaSum:  sha256.Sum256(tool.InputSchema),
+		projection: ToolProjectionCompat,
 		strict:     tool.Strict,
 		readOnly:   tool.ReadOnlyHint,
 		serverName: tool.ServerName,
+	}
+	if native {
+		cacheKey.projection = ToolProjectionNative
+		cacheKey.descriptionSum = sha256.Sum256([]byte(tool.Description))
 	}
 	if len(tool.AttributionFieldNames) > 0 {
 		cacheKey.attribKey = strings.Join(tool.AttributionFieldNames, "\x01")
@@ -658,24 +689,34 @@ func convertToolDefinition(tool llm.ToolDefinition, repairs *llm.RequestRepairs)
 		repairs.SchemaRefDropped += cached.droppedRefs
 		return cached.definition, nil
 	}
-	schema, err := stripSchemaAnnotations(tool.InputSchema)
-	if err != nil {
-		return nil, fmt.Errorf("sanitize Devin tool %q schema: %w", tool.Name, err)
+	schema := tool.InputSchema
+	if !native {
+		stripped, err := stripSchemaAnnotations(tool.InputSchema)
+		if err != nil {
+			return nil, fmt.Errorf("sanitize Devin tool %q schema: %w", tool.Name, err)
+		}
+		schema = stripped
 	}
 	droppedRefs := 0
-	schema, err = normalizeSchema(schema, &droppedRefs)
+	schema, err := normalizeSchema(schema, &droppedRefs)
 	if err != nil {
 		return nil, fmt.Errorf("normalize Devin tool %q schema: %w", tool.Name, err)
 	}
 	repairs.SchemaRefDropped += droppedRefs
-	// prose 统一 unless 子句命中时合成 anyOf 条件必填：strip 已把字段描述
-	// 剥掉，检测必须跑在原始 schema 上，合成产物写进剥离后的 wire schema。
-	if condField, marked, ok := conditionalRequiredSpec(tool.InputSchema); ok {
+	description := tool.Name
+	if native {
+		if text := strings.TrimSpace(tool.Description); text != "" {
+			description = tool.Description
+		}
+	} else if condField, marked, ok := conditionalRequiredSpec(tool.InputSchema); ok {
+		// compat：prose 统一 unless 子句命中时合成 anyOf 条件必填——strip
+		// 已把字段描述剥掉，检测必须跑在原始 schema 上，合成产物写进剥离
+		// 后的 wire schema。native 下字段 prose 原样在 schema 里，不猜。
 		schema = injectConditionalRequired(schema, condField, marked)
 	}
 	converted := &devinproto.ExaChatPb_ChatToolDefinition{
 		Name:             proto.String(tool.Name),
-		Description:      proto.String(tool.Name),
+		Description:      proto.String(description),
 		JsonSchemaString: proto.String(string(schema)),
 	}
 	// 可选透传位（2026-09-15 字段二分实测上游全收）；false/空即缺省不

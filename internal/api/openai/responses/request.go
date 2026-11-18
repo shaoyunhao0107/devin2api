@@ -85,11 +85,6 @@ type Tool struct {
 	Strict *bool `json:"strict,omitempty"`
 }
 
-// customToolInputSchema 把 freeform 工具包装成上游接受的 function 形态：
-// 上游 is_custom_tool 声明通道实测确定性 unknown，改为声明单字符串参数的
-// function，模型将原文填入 input（实测 apply_patch 补丁按此下发）。
-var customToolInputSchema = json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}},"required":["input"],"additionalProperties":false}`)
-
 // webSearchBaitSchema 是托管 web_search 的 function 诱饵 schema——真实
 // Cascade CLI 的 web_search 形态（抓包实测 {query*,num_results?,domain?}），
 // 上游模型原生认识这套参数；模型发出调用后由代理代调上游搜索 RPC。
@@ -270,16 +265,11 @@ func appendToolDefinitions(context *llm.RequestMessages, tools []Tool, flatPrefi
 			nameMaps.add(definition.Name, qualify(tool.Name))
 			context.Tools = append(context.Tools, definition)
 		case "custom":
-			description := tool.Description
-			if tool.Format != nil && tool.Format.Definition != "" {
-				description += "\n\nInput grammar (" + tool.Format.Syntax + "):\n" + tool.Format.Definition
+			var syntax, grammar string
+			if tool.Format != nil {
+				syntax, grammar = tool.Format.Syntax, tool.Format.Definition
 			}
-			definition := llm.ToolDefinition{
-				Name:        flatPrefix + tool.Name,
-				Description: description,
-				InputSchema: customToolInputSchema,
-				Custom:      true,
-			}
+			definition := common.CustomToolDefinition(flatPrefix+tool.Name, tool.Description, syntax, grammar)
 			nameMaps.add(definition.Name, qualify(tool.Name))
 			context.Tools = append(context.Tools, definition)
 		case "namespace":
