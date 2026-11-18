@@ -3,7 +3,8 @@
 // 「incomplete envelope: unexpected EOF」——与线上 TCP 断流在读帧视角同构。
 // 也可模拟静默收尾、上游错误尾帧、挂死、坏帧，用于验证重试链路与错误分层。
 // stream 场景提供正常全流（可配 delta 数/大小/间隔/TTFT），
-// 作为 scripts/perf/snapshot.sh 的确定性压测后端。
+// 作为 scripts/perf/snapshot.sh 的确定性压测后端；toolcall 场景回并行
+// 工具调用并打印收到的 wire 工具声明，用于原生工具链路冒烟。
 package main
 
 import (
@@ -11,6 +12,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -33,7 +35,7 @@ var requestCount atomic.Int64
 func main() {
 	listen := flag.String("listen", "127.0.0.1:48090", "监听地址")
 	scenario := flag.String("scenario", "precontent",
-		"precontent|midcontent|recover|cleaneof|cleaneof-content|bare-end|endstream-error|preframe-error|badframe|badflags|end-hang|heartbeat|stall|stream")
+		"precontent|midcontent|recover|cleaneof|cleaneof-content|bare-end|endstream-error|preframe-error|badframe|badflags|end-hang|heartbeat|stall|stream|toolcall")
 	recoverAfter := flag.Int64("recover-after", 1, "recover 场景下前 N 次请求截断，之后返回完整流")
 	resetIn := flag.Int("reset-in", 30, "preframe-error 场景限流文案的 reset 秒数（<0 = 不带 hint，走 defaultLatch）")
 	deltas := flag.Int("deltas", 200, "stream 场景的 delta 帧数")
@@ -49,7 +51,7 @@ func main() {
 		"precontent": true, "midcontent": true, "recover": true, "cleaneof": true,
 		"cleaneof-content": true, "bare-end": true, "endstream-error": true,
 		"badframe": true, "badflags": true, "end-hang": true, "heartbeat": true,
-		"stall": true, "stream": true, "preframe-error": true,
+		"stall": true, "stream": true, "preframe-error": true, "toolcall": true,
 	}
 	if !validScenarios[*scenario] {
 		log.Fatalf("unknown scenario %q", *scenario)
@@ -178,6 +180,39 @@ func main() {
 				flusher.Flush()
 			}
 			return
+		case "toolcall":
+			// 原生工具链路冒烟：日志打出收到的 wire 工具声明（名/说明/schema/
+			// tool_choice/system 长度）供核对投影；请求带 tools 且末条不是
+			// TOOL 结果时回两个并行调用（首个工具名，参数取首个 required
+			// 字段），否则回纯文本收尾。
+			req := decodeChatRequest(reqBody, jsonWire, r.Header.Get("Content-Encoding"))
+			log.Printf("toolcall #%d prompt_len=%d tool_choice=%s tools=%d", n, len(req.GetPrompt()), protojson.Format(req.GetToolChoice()), len(req.GetTools()))
+			for _, tool := range req.GetTools() {
+				log.Printf("  tool name=%s description=%q schema=%s strict=%v", tool.GetName(), tool.GetDescription(), tool.GetJsonSchemaString(), tool.GetStrict())
+			}
+			prompts := req.GetChatMessagePrompts()
+			answered := len(prompts) > 0 && prompts[len(prompts)-1].GetToolCallId() != ""
+			if len(req.GetTools()) == 0 || answered {
+				body = join(frame(metaFrame(usage), jsonWire), frame(deltaText("stub: tool results received"), jsonWire), frame(stopFrame(), jsonWire), endStream("{}"))
+				break
+			}
+			tool := req.GetTools()[0]
+			field := "input"
+			var schema struct {
+				Required []string `json:"required"`
+			}
+			if json.Unmarshal([]byte(tool.GetJsonSchemaString()), &schema) == nil && len(schema.Required) > 0 {
+				field = schema.Required[0]
+			}
+			call := func(index int, value string) []byte {
+				args, _ := json.Marshal(map[string]string{field: value})
+				return frame(&devinproto.GetChatMessageResponse{DeltaToolCalls: []*devinproto.ExaCodeiumCommonPb_ChatToolCall{{
+					Id: proto.String(fmt.Sprintf("%s_%d", tool.GetName(), index)), Name: proto.String(tool.GetName()), ArgumentsJson: proto.String(string(args)),
+				}}}, jsonWire)
+			}
+			body = join(frame(metaFrame(usage), jsonWire), call(0, "a.go"), call(1, "b.go"),
+				frame(&devinproto.GetChatMessageResponse{StopReason: devinproto.ExaCodeiumCommonPb_StopReason_ExaCodeiumCommonPb_StopReason_STOP_REASON_FUNCTION_CALL.Enum()}, jsonWire),
+				endStream("{}"))
 		case "recover":
 			if n <= *recoverAfter {
 				body = append(frame(metaFrame(usage), jsonWire), 0x00, 0x00)
